@@ -116,6 +116,52 @@ app.delete('/api/matches/:id', (req, res) => {
   }
 });
 
+// 换场地：单场先看影响再落盘、一键恢复原场地
+app.post('/api/relocations/preview', (req, res) => {
+  try {
+    res.json(api.previewRelocation(req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/relocations/apply', (req, res) => {
+  try {
+    res.json(api.applyRelocation(req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/matches/:id/revert-venue', (req, res) => {
+  try {
+    res.json(api.revertRelocation(req.params.id));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// 一次换掉某支球队一段时间里的全部主场
+app.post('/api/relocations/team/preview', (req, res) => {
+  try {
+    res.json(api.previewTeamRelocations(req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/relocations/team/apply', (req, res) => {
+  try {
+    res.json(api.applyTeamRelocations(req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.get('/api/relocations', (_req, res) => {
+  res.json(api.listRelocations());
+});
+
 app.get('/api/standings', (req, res) => {
   res.json(api.computeTable({ keyword: api.readQuery(req.query, 'keyword') }));
 });
@@ -126,9 +172,9 @@ app.use('/api', (_req, res) => {
 
 function sendError(res, err) {
   if (err instanceof api.ApiError) {
-    return res.status(err.status).json({
-      error: { code: err.code, message: err.message, field: err.field },
-    });
+    const body = { error: { code: err.code, message: err.message, field: err.field } };
+    if (err.details) body.error.details = err.details;
+    return res.status(err.status).json(body);
   }
   console.error('[tp145] 处理请求时出现未预期的问题：', err);
   return res.status(500).json({

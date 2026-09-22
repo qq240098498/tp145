@@ -5,7 +5,9 @@ const state = {
   teams: [],
   venues: [],
   matches: [],
+  allMatches: [],
   rounds: [],
+  relocations: [],
   standings: null,
   summary: null,
   drawer: { mode: '', entity: '', id: '', title: '' },
@@ -22,6 +24,7 @@ const VIEW_META = {
   teams: { title: '球队', sub: '登记参赛球队、简称、主场与档位', action: '新增球队' },
   venues: { title: '场地', sub: '登记比赛场地、容量与可用日', action: '新增场地' },
   matches: { title: '赛程', sub: '按轮次查看对阵，登记比分后积分随之变化', action: '新增赛程' },
+  relocations: { title: '换场地', sub: '主队的主场临时不能用时把比赛换到别处，主客关系不变', action: '' },
   table: { title: '积分榜', sub: '按积分、净胜球、进球依次排序', action: '' },
 };
 
@@ -119,6 +122,18 @@ async function loadMatches() {
   renderMatches();
 }
 
+async function loadRelocations() {
+  const payload = await request('/api/relocations');
+  state.relocations = payload.relocated;
+  renderRelocations();
+}
+
+async function loadAllMatches() {
+  const payload = await request('/api/matches');
+  state.allMatches = payload.matches;
+  el('nav-matches').textContent = String(payload.total);
+}
+
 function renderOverview() {
   const data = state.summary;
   if (!data) return;
@@ -203,16 +218,34 @@ function renderMatches() {
       <td>${escapeHtml(item.homeName)}</td>
       <td class="num">${item.scoreText ? escapeHtml(item.scoreText) : '—'}</td>
       <td>${escapeHtml(item.awayName)}</td>
-      <td>${escapeHtml(item.venueName)}</td>
+      <td>${escapeHtml(item.venueName)}${item.venueChanged ? `<span class="pill moved" title="原场地：${escapeHtml(item.originalVenueName || '主队主场')}">已换场</span>` : ''}</td>
       <td>${statusPill(item.status)}</td>
       <td class="muted">${escapeHtml(item.note)}</td>
       <td>
         ${item.status === '已赛' ? '' : `<button type="button" class="mini" data-result-match="${escapeHtml(item.id)}">登记比分</button>`}
+        <button type="button" class="mini" data-relocate-match="${escapeHtml(item.id)}">换场地</button>
         <button type="button" class="mini" data-edit-match="${escapeHtml(item.id)}">编辑</button>
         <button type="button" class="mini danger" data-del-match="${escapeHtml(item.id)}">删除</button>
       </td>
     </tr>`).join('');
   el('match-empty').classList.toggle('show', state.matches.length === 0);
+}
+
+function renderRelocations() {
+  const list = state.relocations || [];
+  el('nav-relocations').textContent = String(list.length);
+  el('relocation-count-hint').textContent = list.length ? `共 ${list.length} 场改过场地，主客关系始终不变` : '';
+  el('relocation-rows').innerHTML = list.map((item) => `<tr>
+      <td class="num">${item.round}</td>
+      <td class="num">${escapeHtml(item.date)}</td>
+      <td class="num">${escapeHtml(item.kickoff)}</td>
+      <td>${escapeHtml(item.homeName)} <span class="muted">vs</span> ${escapeHtml(item.awayName)}</td>
+      <td class="muted">${escapeHtml(item.originalVenueName)}</td>
+      <td><strong>${escapeHtml(item.currentVenueName)}</strong></td>
+      <td>${statusPill(item.status)}</td>
+      <td><button type="button" class="mini" data-revert-match="${escapeHtml(item.id)}">恢复原场地</button></td>
+    </tr>`).join('');
+  el('relocation-empty').classList.toggle('show', list.length === 0);
 }
 
 function renderStandings() {
@@ -315,6 +348,211 @@ function openResultDrawer(match) {
   showDrawer();
 }
 
+/* 换场地 */
+function venueOptionsHtml(currentId) {
+  return optionsHtml(state.venues.map((item) => ({ value: item.id, label: `${item.name}（${item.city}）` })), currentId);
+}
+
+function scheduleItemHtml(item, movedId) {
+  const isMoved = item.id === movedId || item.moved;
+  return `<li class="${isMoved ? 'is-moved' : ''}">
+    <span class="kickoff">${escapeHtml(item.kickoff)}</span>
+    <span class="vs">${escapeHtml(item.homeName)} <em>vs</em> ${escapeHtml(item.awayName)}</span>
+    ${isMoved ? '<span class="tag-moved">本场换入</span>' : statusPill(item.status)}
+  </li>`;
+}
+
+function clashBoxHtml(change) {
+  const other = change.clash.match;
+  return `<div class="impact clash">
+    <b>同一块场地两场比赛挨得太近</b>
+    <ul class="clash-pair">
+      <li><span class="kickoff">${escapeHtml(change.kickoff)}</span><span>${escapeHtml(change.homeName)} <em>vs</em> ${escapeHtml(change.awayName)}（本次换入）</span></li>
+      <li><span class="kickoff">${escapeHtml(other.kickoff)}</span><span>${escapeHtml(other.homeName)} <em>vs</em> ${escapeHtml(other.awayName)}（已排）</span></li>
+    </ul>
+    <p class="hint">两场只隔 ${change.clash.gapMinutes} 分钟，至少要隔 ${change.clash.requiredMinutes} 分钟，换过去也不会被接受。</p>
+  </div>`;
+}
+
+function singleImpactHtml(change) {
+  if (!change) return '<div class="impact-placeholder hint">选好新场地后这里会列出更换影响</div>';
+  return `<div class="impact">
+    <div class="venue-swap">
+      <div><span class="hint">原场地</span><strong>${escapeHtml(change.oldVenueName)}</strong></div>
+      <span class="swap-arrow">→</span>
+      <div><span class="hint">新场地</span><strong>${escapeHtml(change.newVenueName)}</strong></div>
+    </div>
+    ${change.sameVenue ? '<p class="hint">新场地和现在是同一块，不用更换。</p>' : ''}
+    ${change.clash ? clashBoxHtml(change) : ''}
+    <div class="impact-block">
+      <span class="hint">${escapeHtml(change.date)} 新场地上已经排了 ${change.newVenueDaySchedule.length} 场</span>
+      <ul class="schedule">${change.newVenueDaySchedule.length ? change.newVenueDaySchedule.map((item) => scheduleItemHtml(item)).join('') : '<li class="muted">当天还没有别的场次</li>'}</ul>
+    </div>
+    <div class="impact-block">
+      <span class="hint">换完之后这块场地当天的场次顺序</span>
+      <ol class="schedule">${change.afterOrder.map((item) => scheduleItemHtml(item, change.matchId)).join('')}</ol>
+    </div>
+  </div>`;
+}
+
+async function refreshSinglePreview(matchId, venueId) {
+  const id = matchId || collectForm().payload.matchId;
+  const target = venueId || collectForm().payload.venueId;
+  const box = el('relocate-impact');
+  if (!box) return;
+  if (!id || !target) {
+    state.relocatePreview = null;
+    box.innerHTML = singleImpactHtml(null);
+    return;
+  }
+  box.classList.add('loading');
+  try {
+    const payload = await request('/api/relocations/preview', {
+      method: 'POST',
+      body: JSON.stringify({ matchId: id, venueId: target }),
+    });
+    state.relocatePreview = payload.change;
+    box.innerHTML = singleImpactHtml(payload.change);
+  } catch (err) {
+    state.relocatePreview = null;
+    box.innerHTML = `<div class="impact clash"><b>看不了影响</b><p class="hint">${escapeHtml(err.message)}</p></div>`;
+  } finally {
+    box.classList.remove('loading');
+  }
+}
+
+function matchOptionsHtml(selectedId) {
+  const options = state.allMatches
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.kickoff < b.kickoff ? -1 : 1))
+    .map((item) => ({
+      value: item.id,
+      label: `第${item.round}轮 ${item.date} ${item.kickoff} ${item.homeName} vs ${item.awayName}`,
+    }));
+  return optionsHtml([{ value: '', label: '请选择要换场地的场次' }].concat(options), selectedId || '');
+}
+
+function renderSingleForm(matchId) {
+  const match = state.allMatches.find((item) => item.id === matchId);
+  const box = el('relocate-impact');
+  if (!match) {
+    if (box) box.innerHTML = singleImpactHtml(null);
+    return;
+  }
+  state.drawer.title = `换场地：第 ${match.round} 轮 ${match.homeName} vs ${match.awayName}`;
+  el('drawer-title').textContent = state.drawer.title;
+  const defaultVenue = state.venues.find((item) => item.id !== match.effectiveVenueId) || state.venues[0];
+  const form = el('drawer-form');
+  form.querySelector('[data-name="venueId"]').innerHTML = venueOptionsHtml(defaultVenue ? defaultVenue.id : '');
+  form.querySelector('.match-meta').innerHTML = `
+    <div><span class="hint">日期时刻</span><strong>${escapeHtml(match.date)} ${escapeHtml(match.kickoff)}</strong></div>
+    <div><span class="hint">对阵（主客不变）</span><strong>${escapeHtml(match.homeName)} <em class="muted">vs</em> ${escapeHtml(match.awayName)}</strong></div>
+    <div><span class="hint">当前场地</span><strong>${escapeHtml(match.venueName)}</strong></div>`;
+  refreshSinglePreview(match.id, defaultVenue ? defaultVenue.id : '');
+}
+
+function openRelocateDrawer(match) {
+  state.drawer = { mode: 'single', entity: 'relocate', id: match ? match.id : '', title: '单场换场地' };
+  state.relocatePreview = null;
+  el('drawer-form').innerHTML = `
+    <label class="field"><span>哪一场</span>
+      <select data-name="matchId" data-preview="single-pick">${matchOptionsHtml(match ? match.id : '')}</select>
+    </label>
+    <div class="match-meta"></div>
+    <label class="field"><span>换到哪块场地</span>
+      <select data-name="venueId" data-preview="single"></select>
+    </label>
+    <div id="relocate-impact" class="impact-wrap"></div>`;
+  showDrawer();
+  el('drawer-submit').textContent = '确认换场地';
+  renderSingleForm(match ? match.id : '');
+}
+
+function teamClashHtml(plan) {
+  if (!plan.clashes.length) return '';
+  return `<div class="impact clash">
+    <b>${plan.clashes.length} 场会和新场地已排的比赛撞在一起（间隔不足两小时）</b>
+    <ul class="clash-list">
+      ${plan.clashes.map((c) => `<li>
+        <div class="clash-date">${escapeHtml(c.date)} ${escapeHtml(c.kickoff)}　${escapeHtml(c.homeName)} <em>vs</em> ${escapeHtml(c.awayName)}</div>
+        <div class="muted">撞上 ${escapeHtml(c.clash.match.kickoff)}　${escapeHtml(c.clash.match.homeName)} <em>vs</em> ${escapeHtml(c.clash.match.awayName)}，只隔 ${c.clash.gapMinutes} 分钟</div>
+      </li>`).join('')}
+    </ul>
+    <p class="hint">有冲突时整批都不会更换，先错开时刻或换一块场地。</p>
+  </div>`;
+}
+
+function teamImpactHtml(plan) {
+  if (!plan) return '<div class="impact-placeholder hint">选好球队、时间与新场地后点“查看影响”</div>';
+  if (plan.total === 0) return '<div class="impact clash"><b>这段时间没有主场比赛</b><p class="hint">换个时间段，或检查球队有没有选对。</p></div>';
+  return `<div class="impact">
+    <div class="plan-summary">
+      <div><b class="big">${plan.total}</b><span class="hint">场主场要换</span></div>
+      <div><span class="hint">涉及场地</span><strong>${plan.involvedVenues.length ? escapeHtml(plan.involvedVenues.map((v) => v.name).join('、')) : '无'}</strong></div>
+      <div><span class="hint">统一换到</span><strong>${escapeHtml(plan.newVenueName)}</strong></div>
+    </div>
+    ${teamClashHtml(plan)}
+    <div class="impact-block">
+      <span class="hint">逐场影响与换后顺序</span>
+      <div class="plan-list">
+        ${plan.changes.map((c) => `<details class="plan-day" ${c.clash ? 'open' : ''}>
+          <summary class="${c.clash ? 'has-clash' : ''}">
+            <span>${escapeHtml(c.date)} ${escapeHtml(c.kickoff)}</span>
+            <span>${escapeHtml(c.homeName)} <em>vs</em> ${escapeHtml(c.awayName)}</span>
+            <span class="muted">${c.sameVenue ? '已在该场地' : `${escapeHtml(c.oldVenueName)} → ${escapeHtml(c.newVenueName)}`}</span>
+          </summary>
+          <ol class="schedule">${c.afterOrder.map((item) => scheduleItemHtml(item, c.matchId)).join('')}</ol>
+        </details>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function refreshTeamPreview() {
+  const payload = collectForm().payload;
+  const box = el('relocate-impact');
+  if (!payload.teamId || !payload.venueId) {
+    state.relocatePreview = null;
+    if (box) box.innerHTML = teamImpactHtml(null);
+    return;
+  }
+  if (box) box.classList.add('loading');
+  try {
+    const res = await request('/api/relocations/team/preview', {
+      method: 'POST',
+      body: JSON.stringify({ teamId: payload.teamId, venueId: payload.venueId, fromDate: payload.fromDate || '', toDate: payload.toDate || '' }),
+    });
+    state.relocatePreview = res.plan;
+    if (box) box.innerHTML = teamImpactHtml(res.plan);
+  } catch (err) {
+    state.relocatePreview = null;
+    if (box) box.innerHTML = `<div class="impact clash"><b>看不了影响</b><p class="hint">${escapeHtml(err.message)}</p></div>`;
+  } finally {
+    if (box) box.classList.remove('loading');
+  }
+}
+
+function openTeamRelocateDrawer() {
+  state.drawer = { mode: 'team', entity: 'relocate', id: '', title: '整队批量换场地' };
+  state.relocatePreview = null;
+  const teamOptions = optionsHtml(state.teams.map((item) => ({ value: item.id, label: `${item.name}（${item.shortName}）` })), '');
+  el('drawer-form').innerHTML = `
+    <label class="field"><span>球队（只换它这段时间的主场）</span>
+      <select data-name="teamId" data-preview="team"><option value="">请选择球队</option>${teamOptions}</select>
+    </label>
+    <div class="field-row">
+      <label class="field"><span>开始日期（可留空）</span><input data-name="fromDate" maxlength="10" placeholder="2026-03-28"></label>
+      <label class="field"><span>结束日期（可留空）</span><input data-name="toDate" maxlength="10" placeholder="2026-04-30"></label>
+    </div>
+    <label class="field"><span>统一换到哪块场地</span>
+      <select data-name="venueId" data-preview="team"><option value="">请选择场地</option>${state.venues.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}（${escapeHtml(item.city)}）</option>`).join('')}</select>
+    </label>
+    <button type="button" class="ghost" id="team-preview-btn">查看影响</button>
+    <div id="relocate-impact" class="impact-wrap"></div>`;
+  showDrawer();
+  el('drawer-submit').textContent = '确认整批更换';
+}
+
 function showDrawer() {
   el('drawer-title').textContent = state.drawer.title;
   el('drawer').classList.add('show');
@@ -327,7 +565,9 @@ function closeDrawer() {
   el('drawer').classList.remove('show');
   el('backdrop').classList.remove('show');
   el('drawer-form').innerHTML = '';
+  el('drawer-submit').textContent = '保存';
   state.drawer = { mode: '', entity: '', id: '', title: '' };
+  state.relocatePreview = null;
 }
 
 function collectForm() {
@@ -352,6 +592,41 @@ async function submitDrawer() {
   const { payload, days } = collectForm();
   const { mode, entity, id } = state.drawer;
   try {
+    if (entity === 'relocate') {
+      if (mode === 'single') {
+        if (!payload.matchId) throw Object.assign(new Error('请先选择要换场地的场次'), { field: 'matchId' });
+        if (!payload.venueId) throw Object.assign(new Error('请选择要换到哪块场地'), { field: 'venueId' });
+        const preview = state.relocatePreview;
+        if (preview && preview.sameVenue) {
+          throw new Error('新场地和现在是同一块，换一块场地再提交');
+        }
+        if (preview && preview.clash) {
+          throw new Error('这块场地当天两场比赛间隔不足两小时，按上面列出的冲突调整后再换');
+        }
+        await request('/api/relocations/apply', {
+          method: 'POST',
+          body: JSON.stringify({ matchId: payload.matchId, venueId: payload.venueId }),
+        });
+        toast('场地已更换，主客关系不变', 'ok');
+      } else if (mode === 'team') {
+        if (!payload.teamId) throw Object.assign(new Error('请选择要换主场的球队'), { field: 'teamId' });
+        if (!payload.venueId) throw Object.assign(new Error('请选择统一换到哪块场地'), { field: 'venueId' });
+        const res = await request('/api/relocations/team/apply', {
+          method: 'POST',
+          body: JSON.stringify({
+            teamId: payload.teamId,
+            venueId: payload.venueId,
+            fromDate: payload.fromDate || '',
+            toDate: payload.toDate || '',
+          }),
+        });
+        toast(`已更换 ${res.changedCount} 场主场，涉及 ${res.plan.involvedVenues.length} 块场地`, 'ok');
+      }
+      await Promise.all([loadRelocations(), loadMatches().catch(() => {}), loadSummary()]);
+      if (state.allMatches.length) await loadAllMatches();
+      closeDrawer();
+      return;
+    }
     if (entity === 'team') {
       const body = { ...payload, seedRank: Number(payload.seedRank) };
       if (mode === 'edit') await request(`/api/teams/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -403,6 +678,7 @@ async function switchView(view) {
     if (view === 'teams') { await Promise.all([loadVenues(), loadTeams()]); }
     if (view === 'venues') await loadVenues();
     if (view === 'matches') { await Promise.all([loadTeams(), loadMatches()]); }
+    if (view === 'relocations') { await Promise.all([loadVenues(), loadAllMatches(), loadRelocations()]); }
     if (view === 'table') await loadStandings();
   } catch (err) {
     toast(err.message, 'bad');
@@ -455,14 +731,55 @@ el('round-chips').addEventListener('click', (event) => {
   loadMatches().catch((err) => toast(err.message, 'bad'));
 });
 
+el('relocate-single').addEventListener('click', () => openRelocateDrawer(null));
+el('relocate-team').addEventListener('click', openTeamRelocateDrawer);
+
+// 抽屉里换场地表单的联动预览
+el('drawer-form').addEventListener('change', (event) => {
+  const node = event.target;
+  if (state.drawer.entity !== 'relocate') return;
+  if (node.dataset.preview === 'single') {
+    refreshSinglePreview().catch((err) => toast(err.message, 'bad'));
+  } else if (node.dataset.preview === 'single-pick') {
+    renderSingleForm(node.value);
+  } else if (node.dataset.preview === 'team') {
+    refreshTeamPreview().catch((err) => toast(err.message, 'bad'));
+  }
+});
+el('drawer-form').addEventListener('click', (event) => {
+  if (event.target.closest('#team-preview-btn')) {
+    refreshTeamPreview().catch((err) => toast(err.message, 'bad'));
+  }
+});
+
+async function ensureAllMatches() {
+  if (!state.allMatches.length) await loadAllMatches();
+}
+
 document.addEventListener('click', async (event) => {
   const node = event.target.closest('button');
   if (!node) return;
   if (node.dataset.editTeam) return openDrawerFor('teams', node.dataset.editTeam);
   if (node.dataset.editVenue) return openDrawerFor('venues', node.dataset.editVenue);
   if (node.dataset.editMatch) return openDrawerFor('matches', node.dataset.editMatch);
+  if (node.dataset.relocateMatch) {
+    await ensureAllMatches();
+    return openRelocateDrawer(state.allMatches.find((item) => item.id === node.dataset.relocateMatch));
+  }
+  if (node.dataset.revertMatch) {
+    if (!window.confirm('确定把这场恢复到它最初的场地吗？')) return;
+    try {
+      await request(`/api/matches/${encodeURIComponent(node.dataset.revertMatch)}/revert-venue`, { method: 'POST' });
+      toast('已恢复到原场地', 'ok');
+      await Promise.all([loadRelocations(), loadAllMatches(), loadMatches().catch(() => {}), loadSummary()]);
+    } catch (err) {
+      toast(err.message, 'bad');
+    }
+    return;
+  }
   if (node.dataset.resultMatch) {
-    return openResultDrawer(state.matches.find((item) => item.id === node.dataset.resultMatch));
+    await ensureAllMatches();
+    return openResultDrawer(state.allMatches.find((item) => item.id === node.dataset.resultMatch));
   }
   if (node.dataset.delTeam || node.dataset.delVenue || node.dataset.delMatch) {
     const isTeam = Boolean(node.dataset.delTeam);

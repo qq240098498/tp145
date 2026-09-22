@@ -8,8 +8,8 @@ const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const MIN_GAP_MINUTES = 120;
 
 function minutesOf(time) {
-  const [hour, minute] = time.split(':').map(Number);
-  return hour * 60 + minute;
+  const [hour, minute] = String(time).split(':').map(Number);
+  return (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0);
 }
 
 function checkDate(value) {
@@ -127,7 +127,8 @@ function validatePayload(input, data, selfId) {
 function decorate(match, teams, venues) {
   const home = teams.get(match.homeTeamId);
   const away = teams.get(match.awayTeamId);
-  const venue = venues.get(resolveVenueId(match, { teams: Array.from(teams.values()), venues: Array.from(venues.values()) }));
+  const effectiveVenueId = resolveVenueId(match, { teams: Array.from(teams.values()), venues: Array.from(venues.values()) });
+  const venue = venues.get(effectiveVenueId);
   const scoreText = match.status === '已赛' ? `${match.homeGoals} : ${match.awayGoals}` : '';
   let winner = '';
   if (match.status === '已赛') {
@@ -141,7 +142,11 @@ function decorate(match, teams, venues) {
     awayName: away ? away.name : '未知球队',
     homeShort: home ? home.shortName : '',
     awayShort: away ? away.shortName : '',
+    effectiveVenueId,
     venueName: venue ? venue.name : '未指定',
+    originalVenueName: match.venueChanged
+      ? (venues.get(match.originalVenueId) || (home ? venues.get(home.venueId) : null) || {}).name || ''
+      : '',
     scoreText,
     winner,
   };
@@ -236,4 +241,13 @@ function deleteMatch(id) {
   return { id: removed.id, round: removed.round };
 }
 
-module.exports = { listMatches, createMatch, updateMatch, recordResult, deleteMatch, resolveVenueId };
+module.exports = {
+  listMatches,
+  createMatch,
+  updateMatch,
+  recordResult,
+  deleteMatch,
+  resolveVenueId,
+  minutesOf,
+  MIN_GAP_MINUTES,
+};

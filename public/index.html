@@ -22,6 +22,7 @@
         <button type="button" class="nav-item" data-view="teams"><span>球队</span><em id="nav-teams">0</em></button>
         <button type="button" class="nav-item" data-view="venues"><span>场地</span><em id="nav-venues">0</em></button>
         <button type="button" class="nav-item" data-view="matches"><span>赛程</span><em id="nav-matches">0</em></button>
+        <button type="button" class="nav-item" data-view="relocations"><span>换场地</span><em id="nav-relocations">0</em></button>
         <button type="button" class="nav-item" data-view="table"><span>积分榜</span><em>名次</em></button>
       </nav>
 
@@ -111,6 +112,26 @@
             <tbody id="match-rows"></tbody>
           </table>
           <p class="empty" id="match-empty">没有符合条件的赛程</p>
+        </article>
+      </section>
+
+      <section class="view" id="view-relocations">
+        <div class="toolbar">
+          <button type="button" class="primary" id="relocate-single">单场换场地</button>
+          <button type="button" class="ghost" id="relocate-team">整队批量换场</button>
+          <span class="hint">只改比赛场地，主客关系、日期与时刻都不变；同一块场地同一天两场之间至少隔两小时</span>
+        </div>
+        <article class="card">
+          <header class="card-head"><h2>改过场地的场次</h2><span class="hint" id="relocation-count-hint"></span></header>
+          <table class="grid">
+            <thead>
+              <tr>
+                <th>轮次</th><th>日期</th><th>时刻</th><th>对阵</th><th>原场地</th><th>现场地</th><th>状态</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="relocation-rows"></tbody>
+          </table>
+          <p class="empty" id="relocation-empty">还没有换过场地的场次</p>
         </article>
       </section>
 

@@ -13,7 +13,7 @@ const MAX_NOTE = 200;
 const MAX_TEAMS = 12;
 const STATUS_POOL = ['待赛', '已赛', '延期', '取消'];
 
-// 初始数据：八支球队、四个场地（其中两支球队共用中立体育场）、七轮单循环共二十八场，
+// 初始数据：八支球队、六个场地（其中三支球队共用中立体育场）、七轮单循环共二十八场，
 // 前三轮已经打完并记了比分，第四轮有一场延期，其余待赛
 function seedData() {
   const at = '2026-02-20T02:00:00.000Z';
@@ -48,8 +48,11 @@ function seedData() {
   const matches = [];
   const rounds = 7;
   let counter = 0;
+  const firstSaturday = new Date(Date.UTC(2026, 2, 7)); // 2026-03-07，每周六一轮
   for (let round = 1; round <= rounds; round += 1) {
-    const date = `2026-03-${String(7 + (round - 1) * 7).padStart(2, '0')}`;
+    const roundDay = new Date(firstSaturday);
+    roundDay.setUTCDate(firstSaturday.getUTCDate() + (round - 1) * 7);
+    const date = roundDay.toISOString().slice(0, 10);
     for (let i = 0; i < order.length / 2; i += 1) {
       const home = order[i];
       const away = order[order.length - 1 - i];
@@ -166,6 +169,10 @@ function normalize(raw) {
       date: typeof item.date === 'string' ? item.date : '',
       kickoff: typeof item.kickoff === 'string' ? item.kickoff : '',
       venueId: venueIds.has(item.venueId) ? item.venueId : '',
+      // 换过场地的场次留下记录：venueChanged 标记本场实际场地与最初安排不同，
+      // originalVenueId 记下最初场地（空串表示最初直接用主队主场），供页面单列与一键恢复
+      venueChanged: item.venueChanged === true,
+      originalVenueId: venueIds.has(item.originalVenueId) ? item.originalVenueId : '',
       homeTeamId: home,
       awayTeamId: away,
       status,
