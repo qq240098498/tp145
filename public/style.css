@@ -173,6 +173,27 @@ table.grid.standings td:nth-child(n+3) { font-family: Consolas, "Courier New", m
 .venue-card dd { margin: 0; }
 .venue-card .card-actions { display: flex; gap: 6px; margin-top: 10px; }
 
+/* 改过场地的场次与换场地预览 */
+.relocation-card { display: none; margin-bottom: 14px; }
+.relocation-card.show { display: block; }
+.relocation-card .reloc-move {
+  background: var(--amber-soft); color: var(--amber);
+  border-radius: 6px; padding: 1px 6px; font-size: 11.5px;
+}
+.reloc-preview {
+  border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; font-size: 12.5px;
+}
+.reloc-preview h4 { margin: 0 0 4px; font-size: 12.5px; color: var(--ink-soft); }
+.reloc-preview ul, .reloc-preview ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 2px; }
+.reloc-preview .reloc-line b { color: var(--brand); }
+.reloc-arrow { color: var(--brand); font-weight: 700; }
+.reloc-order .self { color: var(--brand); font-weight: 600; }
+.clash-note {
+  margin: 0; background: var(--danger-soft); color: var(--danger);
+  border-radius: 8px; padding: 7px 9px; font-size: 12.5px;
+}
+
 /* 右侧抽屉 */
 .backdrop {
   position: fixed; inset: 0; background: rgba(18, 26, 36, .38);

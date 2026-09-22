@@ -5,6 +5,7 @@ const state = {
   teams: [],
   venues: [],
   matches: [],
+  relocations: [],
   rounds: [],
   standings: null,
   summary: null,
@@ -119,6 +120,12 @@ async function loadMatches() {
   renderMatches();
 }
 
+async function loadRelocations() {
+  const payload = await request('/api/matches/relocations');
+  state.relocations = payload.relocations;
+  renderRelocations();
+}
+
 function renderOverview() {
   const data = state.summary;
   if (!data) return;
@@ -203,16 +210,30 @@ function renderMatches() {
       <td>${escapeHtml(item.homeName)}</td>
       <td class="num">${item.scoreText ? escapeHtml(item.scoreText) : '—'}</td>
       <td>${escapeHtml(item.awayName)}</td>
-      <td>${escapeHtml(item.venueName)}</td>
+      <td>${escapeHtml(item.venueName)}${item.venueRelocated ? ' <span class="pill late">已换场</span>' : ''}</td>
       <td>${statusPill(item.status)}</td>
       <td class="muted">${escapeHtml(item.note)}</td>
       <td>
         ${item.status === '已赛' ? '' : `<button type="button" class="mini" data-result-match="${escapeHtml(item.id)}">登记比分</button>`}
+        ${['待赛', '延期'].includes(item.status) ? `<button type="button" class="mini" data-relocate-match="${escapeHtml(item.id)}">换场地</button>` : ''}
         <button type="button" class="mini" data-edit-match="${escapeHtml(item.id)}">编辑</button>
         <button type="button" class="mini danger" data-del-match="${escapeHtml(item.id)}">删除</button>
       </td>
     </tr>`).join('');
   el('match-empty').classList.toggle('show', state.matches.length === 0);
+}
+
+// 改过场地的场次单独列在赛程表上方：原场地 → 新场地，主客关系不变
+function renderRelocations() {
+  const list = state.relocations;
+  el('relocation-card').classList.toggle('show', list.length > 0);
+  el('relocation-list').innerHTML = list.map((item) => `<li>
+      <span class="round-tag">第 ${item.round} 轮</span>
+      <span>${escapeHtml(item.homeName)} vs ${escapeHtml(item.awayName)}</span>
+      <span class="muted">${escapeHtml(item.date)} ${escapeHtml(item.kickoff)}</span>
+      <span class="reloc-move">${escapeHtml(item.venueFromName || '未指定场地')} → ${escapeHtml(item.venueName)}</span>
+      ${statusPill(item.status)}
+    </li>`).join('');
 }
 
 function renderStandings() {
@@ -315,6 +336,109 @@ function openResultDrawer(match) {
   showDrawer();
 }
 
+/* 换场地：单场与批量共用的预览渲染 */
+const briefText = (m) => `第 ${m.round} 轮 ${m.homeName} vs ${m.awayName}`;
+
+const clashNoteHtml = (clashes) => clashes.map((c) => `<p class="clash-note">撞场：${escapeHtml(c.a.date)} 的 ${escapeHtml(briefText(c.a))}（${c.a.kickoff}）与 ${escapeHtml(briefText(c.b))}（${c.b.kickoff}）只隔 ${c.gap} 分钟，不到两小时，换不过去</p>`).join('');
+
+function openRelocateDrawer(match) {
+  state.drawer = { mode: 'relocate', entity: 'match', id: match.id, title: `换场地：${match.homeName} vs ${match.awayName}` };
+  const venueOptions = [{ value: '', label: '选一块新场地' }].concat(state.venues.map((item) => ({ value: item.id, label: `${item.name}（${item.city}）` })));
+  el('drawer-form').innerHTML = `
+    <p class="hint">第 ${match.round} 轮 · ${escapeHtml(match.date)} ${escapeHtml(match.kickoff)} · 现在的场地：${escapeHtml(match.venueName)}。只换场地，主客关系不变。</p>
+    <label class="field"><span>新场地</span><select data-name="venueId">${optionsHtml(venueOptions, '')}</select></label>
+    <div id="relocate-preview"><p class="hint">选好新场地后，这里会先列出这次更换的影响</p></div>`;
+  showDrawer();
+}
+
+async function fetchRelocationPreview() {
+  const box = el('relocate-preview');
+  if (!box) return;
+  const venueId = el('drawer-form').querySelector('[data-name="venueId"]').value;
+  if (!venueId) {
+    box.innerHTML = '<p class="hint">选好新场地后，这里会先列出这次更换的影响</p>';
+    return;
+  }
+  try {
+    const preview = await request(`/api/matches/${encodeURIComponent(state.drawer.id)}/relocation-preview`, {
+      method: 'POST',
+      body: JSON.stringify({ venueId }),
+    });
+    renderRelocationPreview(preview);
+  } catch (err) {
+    box.innerHTML = `<p class="clash-note">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderRelocationPreview(p) {
+  const sameDay = p.sameDay.length
+    ? `<ul>${p.sameDay.map((m) => `<li>${escapeHtml(m.kickoff)}　${escapeHtml(briefText(m))}</li>`).join('')}</ul>`
+    : '<p class="muted">当天这块场地还没有排别的比赛</p>';
+  const order = p.orderAfter.map((m) => `<li${m.isSelf ? ' class="self"' : ''}>${escapeHtml(m.kickoff)}　${escapeHtml(briefText(m))}${m.isSelf ? '（本场）' : ''}</li>`).join('');
+  el('relocate-preview').innerHTML = `
+    <div class="reloc-preview">
+      <div class="reloc-line">原场地 ${escapeHtml(p.fromVenue.name)} <span class="reloc-arrow">→</span> 新场地 ${escapeHtml(p.toVenue.name)}</div>
+      <div><h4>${escapeHtml(p.match.date)} 当天 ${escapeHtml(p.toVenue.name)} 已经排了</h4>${sameDay}</div>
+      <div><h4>换完之后这块场地当天的场次顺序</h4><ol class="reloc-order">${order}</ol></div>
+      ${clashNoteHtml(p.clashes)}
+    </div>`;
+}
+
+function openTeamRelocateDrawer() {
+  state.drawer = { mode: 'team-relocate', entity: 'match', id: '', title: '批量换主场场地' };
+  const teamOptions = [{ value: '', label: '选一支球队' }].concat(state.teams.map((item) => ({ value: item.id, label: item.name })));
+  const venueOptions = [{ value: '', label: '选一块新场地' }].concat(state.venues.map((item) => ({ value: item.id, label: `${item.name}（${item.city}）` })));
+  el('drawer-form').innerHTML = `
+    <p class="hint">把一支球队在一段时间里的全部主场未赛场次换到另一块场地，主客关系不变；已赛与已取消的不动。</p>
+    <label class="field"><span>球队</span><select data-name="teamId">${optionsHtml(teamOptions, '')}</select></label>
+    <div class="field-row">
+      <label class="field"><span>开始日期</span><input data-name="fromDate" maxlength="10" placeholder="2026-03-01"></label>
+      <label class="field"><span>结束日期</span><input data-name="toDate" maxlength="10" placeholder="2026-06-30"></label>
+    </div>
+    <label class="field"><span>新场地</span><select data-name="venueId">${optionsHtml(venueOptions, '')}</select></label>
+    <div id="team-relocate-preview"><p class="hint">选好球队、时间段与新场地后，这里会先列出这次更换的影响</p></div>`;
+  showDrawer();
+}
+
+async function fetchTeamRelocationPreview() {
+  const box = el('team-relocate-preview');
+  if (!box) return;
+  const read = (name) => el('drawer-form').querySelector(`[data-name="${name}"]`).value.trim();
+  const teamId = read('teamId');
+  const fromDate = read('fromDate');
+  const toDate = read('toDate');
+  const venueId = read('venueId');
+  if (!teamId || !fromDate || !toDate || !venueId) {
+    box.innerHTML = '<p class="hint">选好球队、时间段与新场地后，这里会先列出这次更换的影响</p>';
+    return;
+  }
+  try {
+    const preview = await request(`/api/teams/${encodeURIComponent(teamId)}/relocation-preview`, {
+      method: 'POST',
+      body: JSON.stringify({ fromDate, toDate, venueId }),
+    });
+    renderTeamRelocationPreview(preview);
+  } catch (err) {
+    box.innerHTML = `<p class="clash-note">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderTeamRelocationPreview(p) {
+  const rows = p.matches.map((m) => `<li>第 ${m.round} 轮 · ${escapeHtml(m.date)} ${escapeHtml(m.kickoff)} · 对 ${escapeHtml(m.awayName)} · 原 ${escapeHtml(m.fromVenueName)}</li>`).join('');
+  const fromNames = p.fromVenues.map((v) => escapeHtml(v.name)).join('、');
+  const skippedBits = [];
+  if (p.skipped.played) skippedBits.push(`已赛 ${p.skipped.played} 场不动`);
+  if (p.skipped.cancelled) skippedBits.push(`已取消 ${p.skipped.cancelled} 场不动`);
+  if (p.skipped.alreadyAtVenue) skippedBits.push(`本来就在新场地 ${p.skipped.alreadyAtVenue} 场不动`);
+  el('team-relocate-preview').innerHTML = `
+    <div class="reloc-preview">
+      <div class="reloc-line">一共换 <b>${p.count}</b> 场，涉及场地：${fromNames} <span class="reloc-arrow">→</span> ${escapeHtml(p.toVenue.name)}</div>
+      <ul class="reloc-list">${rows}</ul>
+      ${skippedBits.length ? `<p class="muted">${skippedBits.join('；')}</p>` : ''}
+      ${clashNoteHtml(p.clashes)}
+    </div>`;
+}
+
 function showDrawer() {
   el('drawer-title').textContent = state.drawer.title;
   el('drawer').classList.add('show');
@@ -371,19 +495,33 @@ async function submitDrawer() {
           body: JSON.stringify({ homeGoals: Number(payload.homeGoals), awayGoals: Number(payload.awayGoals) }),
         });
         toast('比分已登记，积分榜已重算', 'ok');
+      } else if (mode === 'relocate') {
+        const moved = await request(`/api/matches/${encodeURIComponent(id)}/relocation`, {
+          method: 'POST',
+          body: JSON.stringify({ venueId: payload.venueId }),
+        });
+        toast(`已换到 ${moved.venueName}，主客关系不变`, 'ok');
+      } else if (mode === 'team-relocate') {
+        const result = await request(`/api/teams/${encodeURIComponent(payload.teamId)}/relocation`, {
+          method: 'POST',
+          body: JSON.stringify({ fromDate: payload.fromDate, toDate: payload.toDate, venueId: payload.venueId }),
+        });
+        toast(`已换 ${result.changed} 场主场比赛，涉及场地：${result.venuesInvolved.join('、')} → ${result.toVenue.name}`, 'ok');
       } else {
         const body = { ...payload, round: Number(payload.round) };
         if (mode === 'edit') await request(`/api/matches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) });
         else await request('/api/matches', { method: 'POST', body: JSON.stringify(body) });
         toast(mode === 'edit' ? '赛程已保存' : '赛程已新增', 'ok');
       }
-      await Promise.all([loadMatches(), loadSummary()]);
+      await Promise.all([loadMatches(), loadSummary(), loadRelocations()]);
       if (state.view === 'table') await loadStandings();
     }
     closeDrawer();
   } catch (err) {
     toast(err.message, 'bad');
     markField(err.field);
+    if (state.drawer.mode === 'relocate') fetchRelocationPreview();
+    if (state.drawer.mode === 'team-relocate') fetchTeamRelocationPreview();
   }
 }
 
@@ -397,12 +535,16 @@ async function switchView(view) {
   el('view-sub').textContent = meta.sub;
   el('head-actions').innerHTML = meta.action ? `<button type="button" class="primary" id="head-add">${meta.action}</button>` : '';
   if (meta.action) el('head-add').addEventListener('click', () => openDrawerFor(view, null));
+  if (view === 'matches') {
+    el('head-actions').insertAdjacentHTML('beforeend', '<button type="button" class="ghost" id="head-team-relocate">批量换场地</button>');
+    el('head-team-relocate').addEventListener('click', openTeamRelocateDrawer);
+  }
 
   try {
     if (view === 'overview') await loadSummary();
     if (view === 'teams') { await Promise.all([loadVenues(), loadTeams()]); }
     if (view === 'venues') await loadVenues();
-    if (view === 'matches') { await Promise.all([loadTeams(), loadMatches()]); }
+    if (view === 'matches') { await Promise.all([loadTeams(), loadVenues(), loadMatches(), loadRelocations()]); }
     if (view === 'table') await loadStandings();
   } catch (err) {
     toast(err.message, 'bad');
@@ -464,6 +606,9 @@ document.addEventListener('click', async (event) => {
   if (node.dataset.resultMatch) {
     return openResultDrawer(state.matches.find((item) => item.id === node.dataset.resultMatch));
   }
+  if (node.dataset.relocateMatch) {
+    return openRelocateDrawer(state.matches.find((item) => item.id === node.dataset.relocateMatch));
+  }
   if (node.dataset.delTeam || node.dataset.delVenue || node.dataset.delMatch) {
     const isTeam = Boolean(node.dataset.delTeam);
     const isVenue = Boolean(node.dataset.delVenue);
@@ -486,6 +631,13 @@ el('drawer-cancel').addEventListener('click', closeDrawer);
 el('drawer-close').addEventListener('click', closeDrawer);
 el('backdrop').addEventListener('click', closeDrawer);
 el('drawer-form').addEventListener('submit', (event) => { event.preventDefault(); submitDrawer(); });
+// 换场地抽屉里每改一项就重新算一次影响，撞场当场看得到
+el('drawer-form').addEventListener('change', (event) => {
+  const name = event.target && event.target.dataset ? event.target.dataset.name : '';
+  if (!name) return;
+  if (state.drawer.mode === 'relocate' && name === 'venueId') fetchRelocationPreview();
+  if (state.drawer.mode === 'team-relocate' && ['teamId', 'fromDate', 'toDate', 'venueId'].includes(name)) fetchTeamRelocationPreview();
+});
 el('operator').addEventListener('change', () => {
   window.localStorage.setItem(OPERATOR_KEY, el('operator').value.trim());
 });

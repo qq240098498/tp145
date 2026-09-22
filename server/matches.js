@@ -12,15 +12,16 @@ function minutesOf(time) {
   return hour * 60 + minute;
 }
 
-function checkDate(value) {
+function checkDate(value, field) {
+  const target = field || 'date';
   const date = pickText(value);
   if (!DATE_PATTERN.test(date)) {
-    throw new ApiError(400, 'DATE_INVALID', '日期要写成四位年加短横线加两位月日，例如 2026-03-14', 'date');
+    throw new ApiError(400, 'DATE_INVALID', '日期要写成四位年加短横线加两位月日，例如 2026-03-14', target);
   }
   const [year, month, day] = date.split('-').map(Number);
   const probe = new Date(Date.UTC(year, month - 1, day));
   if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
-    throw new ApiError(400, 'DATE_INVALID', '这个日期不存在，请检查月份与日', 'date');
+    throw new ApiError(400, 'DATE_INVALID', '这个日期不存在，请检查月份与日', target);
   }
   return date;
 }
@@ -128,6 +129,7 @@ function decorate(match, teams, venues) {
   const home = teams.get(match.homeTeamId);
   const away = teams.get(match.awayTeamId);
   const venue = venues.get(resolveVenueId(match, { teams: Array.from(teams.values()), venues: Array.from(venues.values()) }));
+  const fromVenue = match.venueFrom ? venues.get(match.venueFrom) : null;
   const scoreText = match.status === '已赛' ? `${match.homeGoals} : ${match.awayGoals}` : '';
   let winner = '';
   if (match.status === '已赛') {
@@ -142,6 +144,8 @@ function decorate(match, teams, venues) {
     homeShort: home ? home.shortName : '',
     awayShort: away ? away.shortName : '',
     venueName: venue ? venue.name : '未指定',
+    venueRelocated: match.venueRelocated === true,
+    venueFromName: fromVenue ? fromVenue.name : '',
     scoreText,
     winner,
   };
@@ -236,4 +240,15 @@ function deleteMatch(id) {
   return { id: removed.id, round: removed.round };
 }
 
-module.exports = { listMatches, createMatch, updateMatch, recordResult, deleteMatch, resolveVenueId };
+module.exports = {
+  listMatches,
+  createMatch,
+  updateMatch,
+  recordResult,
+  deleteMatch,
+  resolveVenueId,
+  decorate,
+  checkDate,
+  minutesOf,
+  MIN_GAP_MINUTES,
+};

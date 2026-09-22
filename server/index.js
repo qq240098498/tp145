@@ -116,6 +116,45 @@ app.delete('/api/matches/:id', (req, res) => {
   }
 });
 
+// 换过场地的场次单独列出（要放在 /api/matches/:id 系列之前注册，路径不冲突但读着顺）
+app.get('/api/matches/relocations', (_req, res) => {
+  res.json(api.listRelocations());
+});
+
+// 单场换场地：先预览影响，确认后再落子
+app.post('/api/matches/:id/relocation-preview', (req, res) => {
+  try {
+    res.json(api.previewRelocation(req.params.id, req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/matches/:id/relocation', (req, res) => {
+  try {
+    res.json(api.relocateMatch(req.params.id, req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// 批量换场地：一支球队在一段时间里的全部主场未赛场次
+app.post('/api/teams/:id/relocation-preview', (req, res) => {
+  try {
+    res.json(api.previewTeamRelocation(req.params.id, req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+app.post('/api/teams/:id/relocation', (req, res) => {
+  try {
+    res.json(api.relocateTeamHomeMatches(req.params.id, req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.get('/api/standings', (req, res) => {
   res.json(api.computeTable({ keyword: api.readQuery(req.query, 'keyword') }));
 });

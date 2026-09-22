@@ -171,6 +171,8 @@ function normalize(raw) {
       status,
       homeGoals: status === '已赛' && item.homeGoals !== null && item.homeGoals !== undefined ? Number(item.homeGoals) : null,
       awayGoals: status === '已赛' && item.awayGoals !== null && item.awayGoals !== undefined ? Number(item.awayGoals) : null,
+      venueRelocated: item.venueRelocated === true,
+      venueFrom: typeof item.venueFrom === 'string' && venueIds.has(item.venueFrom) ? item.venueFrom : '',
       note: typeof item.note === 'string' ? item.note : '',
       createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
       updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
